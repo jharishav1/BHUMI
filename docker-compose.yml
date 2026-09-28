@@ -1,0 +1,68 @@
+version: '3.8'
+
+services:
+  # 1. PostgreSQL with PostGIS Spatial Extension
+  postgis:
+    image: postgis/postgis:15-3.3-alpine
+    container_name: bhumi_postgis
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgrespassword
+      POSTGRES_DB: bhumi
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgis_data:/var/lib/postgresql/data
+      - ./server/db/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d bhumi"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # 2. Python FastAPI Agent-Based Simulation Service
+  simulation-service:
+    build:
+      context: ./simulation-service
+      dockerfile: Dockerfile
+    container_name: bhumi_simulation_service
+    ports:
+      - "8000:8000"
+    environment:
+      - PORT=8000
+    restart: unless-stopped
+
+  # 3. Node.js Express REST API & Spatial Gateway
+  backend:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: bhumi_backend
+    ports:
+      - "5000:5000"
+    environment:
+      - PORT=5000
+      - DATABASE_URL=postgresql://postgres:postgrespassword@postgis:5432/bhumi
+      - PYTHON_SIM_URL=http://simulation-service:8000
+      - NODE_ENV=production
+    depends_on:
+      postgis:
+        condition: service_healthy
+      simulation-service:
+        condition: service_started
+    restart: unless-stopped
+
+  # 4. React 19 Frontend Web Application
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: bhumi_frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  postgis_data:
